@@ -10,9 +10,16 @@ app.use(express.json());
 
 // Inicialización del SDK oficial de Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-// Generador de respaldo (Fallback) en caso de que la IA no responda o falle
+// Configuración del modelo forzando salida JSON estructurada
+const model = genAI.getGenerativeModel({ 
+    model: "gemini-1.5-flash",
+    generationConfig: {
+        responseMimeType: "application/json"
+    }
+});
+
+// Generador de respaldo (Fallback)
 function generateFallbackIsland() {
     const width = 32;
     const height = 32;
@@ -27,8 +34,9 @@ function generateFallbackIsland() {
         }
     }
     grid[4][4] = 4; grid[27][4] = 4; grid[4][27] = 4; grid[27][27] = 4; // Spawns
+    
     return {
-        map_name: "island_map (Local Offline)",
+        map_name: "Isla Base (Offline)",
         theme: "Cyberpunk Island Base",
         width,
         height,
@@ -36,29 +44,41 @@ function generateFallbackIsland() {
     };
 }
 
-// Ruta principal para generar y renderizar el mapa
+// Ruta raíz para verificación de Render
+app.get('/', (req, res) => {
+    res.status(200).send("Rat Wars Render Server - Online");
+});
+
+// Endpoint de verificación de estado
+app.get('/api/status', (req, res) => {
+    res.status(200).json({ status: "online", service: "Rat Wars Render Server" });
+});
+
+// Ruta principal para generar el mapa
 app.post('/api/render_map', async (req, res) => {
     const userPrompt = req.body.prompt || "Isla cyberpunk equilibrada con rios de queso";
     console.log(`[Render Server] Procesando prompt: "${userPrompt}"`);
 
     if (!process.env.GEMINI_API_KEY) {
-        console.warn("⚠️ No se encontró GEMINI_API_KEY en las variables de entorno. Usando mapa base.");
+        console.warn("⚠️ No se encontró GEMINI_API_KEY. Usando mapa fallback.");
         const fallback = generateFallbackIsland();
         return res.status(200).json({ success: true, map: fallback });
     }
 
     try {
         const prompt = `Eres un diseñador de mapas procedurales para el juego Rat Wars.
-Genera una estructura de mapa basada en este pedido: "${userPrompt}".
-Responde UNICAMENTE en formato JSON plano sin bloques de código con esta estructura:
+Genera un mapa de matriz de 32x32 para el juego siguiendo esta indicación: "${userPrompt}".
+
+Formato estricto JSON:
 {
-  "map_name": "Nombre creativo del mapa",
+  "map_name": "Nombre creativo",
   "theme": "Estilo visual",
   "width": 32,
   "height": 32,
   "grid": [[0,0,1,...], [0,1,1,...]]
 }
-Donde en grid:
+
+Valores numéricos de la matriz (grid):
 0 = Agua/Vacío
 1 = Tierra/Piso
 2 = Estructura/Pared
@@ -68,25 +88,20 @@ Donde en grid:
         const result = await model.generateContent(prompt);
         const responseText = result.response.text();
 
-        // Limpiar markdown json si viniera envuelto
+        // Limpieza de marcadores markdown si existieran
         const cleanJson = responseText.replace(/```json|```/g, '').trim();
         const mapData = JSON.parse(cleanJson);
 
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
             map: mapData
         });
 
     } catch (error) {
-        console.error("Error al procesar render con IA:", error);
+        console.error("Error procesando render con IA:", error.message);
         const fallback = generateFallbackIsland();
-        res.status(200).json({ success: true, map: fallback });
+        return res.status(200).json({ success: true, map: fallback });
     }
-});
-
-// Endpoint de verificación de estado
-app.get('/api/status', (req, res) => {
-    res.status(200).json({ status: "online", service: "Rat Wars Render Server" });
 });
 
 app.listen(PORT, () => {

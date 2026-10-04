@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { GoogleGenAI } = require('@google/genai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -8,8 +8,9 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Inicialización de la API de Gemini mediante variable de entorno
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+// Inicialización del SDK oficial de Gemini
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 // Generador de respaldo (Fallback) en caso de que la IA no responda o falle
 function generateFallbackIsland() {
@@ -47,9 +48,7 @@ app.post('/api/render_map', async (req, res) => {
     }
 
     try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: `Eres un diseñador de mapas procedurales para el juego Rat Wars.
+        const prompt = `Eres un diseñador de mapas procedurales para el juego Rat Wars.
 Genera una estructura de mapa basada en este pedido: "${userPrompt}".
 Responde UNICAMENTE en formato JSON plano sin bloques de código con esta estructura:
 {
@@ -64,10 +63,13 @@ Donde en grid:
 1 = Tierra/Piso
 2 = Estructura/Pared
 3 = Río/Zona Neón
-4 = Punto de Spawn`
-        });
+4 = Punto de Spawn`;
 
-        const cleanJson = response.text.replace(/```json|```/g, '').trim();
+        const result = await model.generateContent(prompt);
+        const responseText = result.response.text();
+
+        // Limpiar markdown json si viniera envuelto
+        const cleanJson = responseText.replace(/```json|```/g, '').trim();
         const mapData = JSON.parse(cleanJson);
 
         res.status(200).json({

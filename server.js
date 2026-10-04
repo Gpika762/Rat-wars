@@ -5,21 +5,23 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// Configuración global de CORS
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// Inicialización del SDK oficial de Gemini
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+// Inicialización del SDK de Gemini
+const apiKey = process.env.GEMINI_API_KEY || "";
+const genAI = new GoogleGenerativeAI(apiKey);
 
-// Configuración del modelo forzando salida JSON estructurada
+// Configuración del modelo (Gemini Flash con respuesta JSON estricta)
 const model = genAI.getGenerativeModel({ 
-    model: "gemini-1.5-flash",
+    model: "gemini-2.5-flash",
     generationConfig: {
         responseMimeType: "application/json"
     }
 });
 
-// Generador de respaldo (Fallback)
+// Generador de mapa de respaldo (Fallback)
 function generateFallbackIsland() {
     const width = 32;
     const height = 32;
@@ -44,32 +46,31 @@ function generateFallbackIsland() {
     };
 }
 
-// Ruta raíz para verificación de Render
+// 1. Ruta raíz
 app.get('/', (req, res) => {
     res.status(200).send("Rat Wars Render Server - Online");
 });
 
-// Endpoint de verificación de estado
+// 2. Endpoint de verificación de estado para GameMaker
 app.get('/api/status', (req, res) => {
     res.status(200).json({ status: "online", service: "Rat Wars Render Server" });
 });
 
-// Ruta principal para generar el mapa
+// 3. Ruta principal para generar el mapa
 app.post('/api/render_map', async (req, res) => {
     const userPrompt = req.body.prompt || "Isla cyberpunk equilibrada con rios de queso";
     console.log(`[Render Server] Procesando prompt: "${userPrompt}"`);
 
-    if (!process.env.GEMINI_API_KEY) {
-        console.warn("⚠️ No se encontró GEMINI_API_KEY. Usando mapa fallback.");
-        const fallback = generateFallbackIsland();
-        return res.status(200).json({ success: true, map: fallback });
+    if (!apiKey) {
+        console.warn("⚠️ No se encontró GEMINI_API_KEY en variables de entorno. Usando mapa fallback.");
+        return res.status(200).json({ success: true, map: generateFallbackIsland() });
     }
 
     try {
         const prompt = `Eres un diseñador de mapas procedurales para el juego Rat Wars.
 Genera un mapa de matriz de 32x32 para el juego siguiendo esta indicación: "${userPrompt}".
 
-Formato estricto JSON:
+Formato estricto JSON de salida:
 {
   "map_name": "Nombre creativo",
   "theme": "Estilo visual",
@@ -78,7 +79,7 @@ Formato estricto JSON:
   "grid": [[0,0,1,...], [0,1,1,...]]
 }
 
-Valores numéricos de la matriz (grid):
+Valores numéricos obligatorios de la matriz (grid):
 0 = Agua/Vacío
 1 = Tierra/Piso
 2 = Estructura/Pared
@@ -88,9 +89,8 @@ Valores numéricos de la matriz (grid):
         const result = await model.generateContent(prompt);
         const responseText = result.response.text();
 
-        // Limpieza de marcadores markdown si existieran
-        const cleanJson = responseText.replace(/```json|```/g, '').trim();
-        const mapData = JSON.parse(cleanJson);
+        // Parsea el JSON directamente devuelto por Gemini
+        const mapData = JSON.parse(responseText);
 
         return res.status(200).json({
             success: true,
@@ -98,9 +98,13 @@ Valores numéricos de la matriz (grid):
         });
 
     } catch (error) {
-        console.error("Error procesando render con IA:", error.message);
-        const fallback = generateFallbackIsland();
-        return res.status(200).json({ success: true, map: fallback });
+        console.error("❌ Error en la llamada a Gemini API:", error.message);
+        // Devuelve el mapa offline garantizando un formato válido para GameMaker
+        return res.status(200).json({ 
+            success: true, 
+            map: generateFallbackIsland(),
+            error_info: "Fallback activado por error de API"
+        });
     }
 });
 

@@ -10,12 +10,13 @@
     "ratwars",
     "render",
     "gemini",
+    "openrouter",
     "express"
   ],
   "author": "Gpika762",
   "license": "ISC",
   "dependencies": {
-    "@google/generative-ai": "^0.21.0",
+    "axios": "^1.6.8",
     "cors": "^2.8.5",
     "express": "^4.18.2"
   },

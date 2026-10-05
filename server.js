@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const axios = require('axios');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -9,17 +9,8 @@ const PORT = process.env.PORT || 3000;
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// Inicialización del SDK de Gemini
-const apiKey = process.env.GEMINI_API_KEY || "";
-const genAI = new GoogleGenerativeAI(apiKey);
-
-// Configuración del modelo (Gemini Flash con respuesta JSON estricta)
-const model = genAI.getGenerativeModel({ 
-    model: "gemini-2.5-flash",
-    generationConfig: {
-        responseMimeType: "application/json"
-    }
-});
+// Clave API de OpenRouter desde las variables de entorno
+const openRouterApiKey = process.env.OPENROUTER_API_KEY || "";
 
 // Generador de mapa de respaldo (Fallback)
 function generateFallbackIsland() {
@@ -56,19 +47,25 @@ app.get('/api/status', (req, res) => {
     res.status(200).json({ status: "online", service: "Rat Wars Render Server" });
 });
 
-// 3. Ruta principal para generar el mapa
+// 3. Ruta principal para generar el mapa mediante OpenRouter
 app.post('/api/render_map', async (req, res) => {
     const userPrompt = req.body.prompt || "Isla cyberpunk equilibrada con rios de queso";
     console.log(`[Render Server] Procesando prompt: "${userPrompt}"`);
 
-    if (!apiKey) {
-        console.warn("⚠️ No se encontró GEMINI_API_KEY en variables de entorno. Usando mapa fallback.");
-        return res.status(200).json({ success: true, map: generateFallbackIsland() });
+    if (!openRouterApiKey) {
+        console.warn("⚠️ No se encontró OPENROUTER_API_KEY en variables de entorno. Usando mapa fallback.");
+        return res.status(200).json({ 
+            success: true, 
+            map: generateFallbackIsland(),
+            error_info: "Fallback activado: Falta OPENROUTER_API_KEY"
+        });
     }
 
     try {
-        const prompt = `Eres un diseñador de mapas procedurales para el juego Rat Wars.
-Genera un mapa de matriz de 32x32 para el juego siguiendo esta indicación: "${userPrompt}".
+        const systemPrompt = `Eres un diseñador de mapas procedurales para el juego Rat Wars.
+Genera un mapa de matriz de 32x32 para el juego.
+
+Debes responder ÚNICAMENTE con un JSON válido, sin bloques de código ni Markdown.
 
 Formato estricto JSON de salida:
 {
@@ -86,10 +83,32 @@ Valores numéricos obligatorios de la matriz (grid):
 3 = Río/Zona Neón
 4 = Punto de Spawn`;
 
-        const result = await model.generateContent(prompt);
-        const responseText = result.response.text();
+        const response = await axios.post(
+            'https://openrouter.ai/api/v1/chat/completions',
+            {
+                model: 'google/gemini-2.5-flash-lite',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: `Indicación del mapa: "${userPrompt}"` }
+                ],
+                response_format: { type: 'json_object' }
+            },
+            {
+                headers: {
+                    'Authorization': `Bearer ${openRouterApiKey}`,
+                    'Content-Type': 'application/json',
+                    'HTTP-Referer': 'https://rat-wars.onrender.com',
+                    'X-Title': 'Rat Wars Game'
+                },
+                timeout: 15000
+            }
+        );
 
-        // Parsea el JSON directamente devuelto por Gemini
+        let responseText = response.data.choices[0].message.content;
+
+        // Limpiar posible cercado Markdown (```json ... ```) si el modelo lo incluye
+        responseText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+
         const mapData = JSON.parse(responseText);
 
         return res.status(200).json({
@@ -98,12 +117,11 @@ Valores numéricos obligatorios de la matriz (grid):
         });
 
     } catch (error) {
-        console.error("❌ Error en la llamada a Gemini API:", error.message);
-        // Devuelve el mapa offline garantizando un formato válido para GameMaker
+        console.error("❌ Error en la llamada a OpenRouter API:", error.response?.data || error.message);
         return res.status(200).json({ 
             success: true, 
             map: generateFallbackIsland(),
-            error_info: "Fallback activado por error de API"
+            error_info: "Fallback activado por error de API u OpenRouter"
         });
     }
 });

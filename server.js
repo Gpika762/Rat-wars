@@ -5,7 +5,7 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Configuración global de CORS
+
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 

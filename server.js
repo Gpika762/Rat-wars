@@ -5,83 +5,153 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 // Clave API de OpenRouter desde las variables de entorno
 const openRouterApiKey = process.env.OPENROUTER_API_KEY || "";
 
-// Generador de mapa de respaldo (Fallback)
-function generateFallbackIsland() {
-    const width = 32;
-    const height = 32;
-    let grid = Array(height).fill().map(() => Array(width).fill(0));
-    const cx = 16, cy = 16;
+// Medidas reales: 156x94 casillas de 32x32px = 4992x3008 px (Abarca los 5000x3000px de la room)
+const DEFAULT_MAP_WIDTH = 156; 
+const DEFAULT_MAP_HEIGHT = 94; 
+const TILE_SIZE = 32;
 
-    for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-            const dist = Math.hypot(x - cx, y - cy);
-            if (dist < 13) grid[y][x] = 1; // Tierra
-            if (Math.abs(x - cx) < 2 && dist < 13) grid[y][x] = 3; // Río central
+// Generador de mapa de respaldo (Fallback Offline) adaptado a 156x94 (4992x3008 px)
+function generateFallbackIsland(w = DEFAULT_MAP_WIDTH, h = DEFAULT_MAP_HEIGHT) {
+    let grid = Array(h).fill().map(() => Array(w).fill(0));
+    const cx = Math.floor(w / 2);
+    const cy = Math.floor(h / 2);
+
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            // Bordes de mapa (Paredes / Agua)
+            if (x === 0 || y === 0 || x === w - 1 || y === h - 1) {
+                grid[y][x] = 2; // Pared
+                continue;
+            }
+
+            // Distancia para forma de isla alargada
+            const dx = (x - cx) / (w / 2.2);
+            const dy = (y - cy) / (h / 2.2);
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < 0.85) {
+                grid[y][x] = 1; // Tierra / Pasto
+            }
+
+            // Río horizontal central
+            if (Math.abs(y - cy) <= 2 && dist < 0.8) {
+                grid[y][x] = 3; // Río de Queso / Zona Neón
+            }
         }
     }
-    grid[4][4] = 4; grid[27][4] = 4; grid[4][27] = 4; grid[27][27] = 4; // Spawns
-    
+
+    // Spawns en las esquinas
+    const marginX = 8;
+    const marginY = 8;
+    grid[marginY][marginX] = 4;
+    grid[h - marginY - 1][marginX] = 4;
+    grid[marginY][w - marginX - 1] = 4;
+    grid[h - marginY - 1][w - marginX - 1] = 4;
+
     return {
-        map_name: "Isla Base (Offline)",
-        theme: "Cyberpunk Island Base",
-        width,
-        height,
+        map_name: "Isla Batalla Rat Wars (Offline)",
+        theme: "Cyberpunk Fortnite Queso",
+        width: w,
+        height: h,
+        tile_size: TILE_SIZE,
+        real_width_px: w * TILE_SIZE,
+        real_height_px: h * TILE_SIZE,
+        bus_route: {
+            start: { x: 5, y: 5 },
+            end: { x: w - 5, y: h - 5 }
+        },
+        pois: [
+            { name: "Torres Queseras", x: Math.floor(w * 0.3), y: Math.floor(h * 0.4) },
+            { name: "Santuario Roedor", x: Math.floor(w * 0.7), y: Math.floor(h * 0.6) }
+        ],
+        special_objects: [
+            { type: "chest", x: Math.floor(w * 0.3), y: Math.floor(h * 0.4), tag: "Cofre de Botín" },
+            { type: "chest", x: Math.floor(w * 0.7), y: Math.floor(h * 0.6), tag: "Cofre de Botín" },
+            { type: "supply_drop", x: cx, y: cy, tag: "Drop Neón" }
+        ],
         grid
     };
 }
 
-// 1. Ruta raíz
+// 1. Ruta raíz con dimensiones reales
 app.get('/', (req, res) => {
-    res.status(200).send("Rat Wars Render Server - Online");
+    res.status(200).send(`Rat Wars Render Server - Online (Medidas Reales: ${DEFAULT_MAP_WIDTH}x${DEFAULT_MAP_HEIGHT} casillas = ${DEFAULT_MAP_WIDTH * TILE_SIZE}x${DEFAULT_MAP_HEIGHT * TILE_SIZE} px)`);
 });
 
-// 2. Endpoint de verificación de estado para GameMaker
+// 2. Endpoint de estado
 app.get('/api/status', (req, res) => {
-    res.status(200).json({ status: "online", service: "Rat Wars Render Server" });
+    res.status(200).json({ 
+        status: "online", 
+        service: "Rat Wars Render Server",
+        dimensions: {
+            grid: `${DEFAULT_MAP_WIDTH}x${DEFAULT_MAP_HEIGHT}`,
+            pixels: `${DEFAULT_MAP_WIDTH * TILE_SIZE}x${DEFAULT_MAP_HEIGHT * TILE_SIZE}`
+        }
+    });
 });
 
-// 3. Ruta principal para generar el mapa mediante OpenRouter
+// 3. Ruta principal de generación de mapa
 app.post('/api/render_map', async (req, res) => {
-    const userPrompt = req.body.prompt || "Isla cyberpunk equilibrada con rios de queso";
-    console.log(`[Render Server] Procesando prompt: "${userPrompt}"`);
+    const userPrompt = req.body.prompt || "Isla de batalla estilo Fortnite con ríos de queso, edificios neón y cofres de botín";
+    const mapWidth = req.body.width || DEFAULT_MAP_WIDTH;
+    const mapHeight = req.body.height || DEFAULT_MAP_HEIGHT;
+
+    console.log(`[Render Server] Procesando prompt: "${userPrompt}" (${mapWidth}x${mapHeight} casillas | ${mapWidth * TILE_SIZE}x${mapHeight * TILE_SIZE} px)`);
 
     if (!openRouterApiKey) {
         console.warn("⚠️ No se encontró OPENROUTER_API_KEY en variables de entorno. Usando mapa fallback.");
         return res.status(200).json({ 
             success: true, 
-            map: generateFallbackIsland(),
+            map: generateFallbackIsland(mapWidth, mapHeight),
             error_info: "Fallback activado: Falta OPENROUTER_API_KEY"
         });
     }
 
     try {
-        const systemPrompt = `Eres un diseñador de mapas procedurales para el juego Rat Wars.
-Genera un mapa de matriz de 32x32 para el juego.
+        const systemPrompt = `Eres el diseñador principal de mapas procedurales para Rat Wars, un juego de batalla campal estilo Fortnite.
+Genera un mapa de matriz de ${mapWidth} columnas por ${mapHeight} filas (correspondiente a una arena de ${mapWidth * TILE_SIZE}x${mapHeight * TILE_SIZE} píxeles con casillas de 32x32).
 
-Debes responder ÚNICAMENTE con un JSON válido, sin bloques de código ni Markdown.
+El mapa se recorre desde un autobús de batalla/despliegue aéreo sobre la isla. Diseña puntos de interés (POIs), zonas de botín y objetos temáticos.
+
+Debes responder ÚNICAMENTE con un JSON válido, sin ningún texto alrededor ni marcas de Markdown.
 
 Formato estricto JSON de salida:
 {
-  "map_name": "Nombre creativo",
+  "map_name": "Nombre creativo de la isla",
   "theme": "Estilo visual",
-  "width": 32,
-  "height": 32,
+  "width": ${mapWidth},
+  "height": ${mapHeight},
+  "tile_size": 32,
+  "real_width_px": ${mapWidth * TILE_SIZE},
+  "real_height_px": ${mapHeight * TILE_SIZE},
+  "bus_route": {
+    "start": {"x": 10, "y": 0},
+    "end": {"x": 140, "y": 90}
+  },
+  "pois": [
+    {"name": "Poblado Quesero", "x": 30, "y": 25},
+    {"name": "Torres Neón", "x": 80, "y": 45}
+  ],
+  "special_objects": [
+    {"type": "chest", "x": 32, "y": 26, "tag": "Cofre de Botín"},
+    {"type": "supply_drop", "x": 75, "y": 50, "tag": "Suministro Aéreo"},
+    {"type": "building_tower", "x": 40, "y": 30, "tag": "Estructura Construida"}
+  ],
   "grid": [[0,0,1,...], [0,1,1,...]]
 }
 
 Valores numéricos obligatorios de la matriz (grid):
-0 = Agua/Vacío
-1 = Tierra/Piso
-2 = Estructura/Pared
+0 = Agua/Vacío (Límite exterior)
+1 = Tierra/Piso (Pasto, terreno transitable)
+2 = Estructura/Pared/Obstáculo (Muro infranqueable)
 3 = Río/Zona Neón
-4 = Punto de Spawn`;
+4 = Punto de Spawn / Caída recomendada`;
 
         const response = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
@@ -100,14 +170,14 @@ Valores numéricos obligatorios de la matriz (grid):
                     'HTTP-Referer': 'https://rat-wars.onrender.com',
                     'X-Title': 'Rat Wars Game'
                 },
-                timeout: 15000
+                timeout: 30000
             }
         );
 
         let responseText = response.data.choices[0].message.content;
 
-        // Limpiar posible cercado Markdown (```json ... ```) si el modelo lo incluye
-        responseText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+        // Limpieza de Markdown (```json ... ```)
+        responseText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
 
         const mapData = JSON.parse(responseText);
 
@@ -120,12 +190,12 @@ Valores numéricos obligatorios de la matriz (grid):
         console.error("❌ Error en la llamada a OpenRouter API:", error.response?.data || error.message);
         return res.status(200).json({ 
             success: true, 
-            map: generateFallbackIsland(),
+            map: generateFallbackIsland(mapWidth, mapHeight),
             error_info: "Fallback activado por error de API u OpenRouter"
         });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`⚡ SERVIDOR DE RENDER ACTIVO EN PUERTO ${PORT}`);
+    console.log(`⚡ SERVIDOR DE RENDER ACTIVO EN PUERTO ${PORT} (Soporte Real: ${DEFAULT_MAP_WIDTH}x${DEFAULT_MAP_HEIGHT} casillas = ${DEFAULT_MAP_WIDTH * TILE_SIZE}x${DEFAULT_MAP_HEIGHT * TILE_SIZE} px)`);
 });

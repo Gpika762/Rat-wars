@@ -11,52 +11,44 @@ app.use(express.json());
 // Clave API de OpenRouter desde las variables de entorno
 const openRouterApiKey = process.env.OPENROUTER_API_KEY || "";
 
-// Medidas reales: 156x94 casillas de 32x32px = 4992x3008 px (Abarca los 5000x3000px de la room)
+// Medidas reales: 156x94 casillas de 32x32px
 const DEFAULT_MAP_WIDTH = 156; 
 const DEFAULT_MAP_HEIGHT = 94; 
 const TILE_SIZE = 32;
 
-// Generador de mapa de respaldo (Fallback Offline) adaptado a 156x94 (4992x3008 px)
+// Generador de mapa de respaldo (Fallback Offline) usando exclusivamente valores 0, 1, 2, 3
 function generateFallbackIsland(w = DEFAULT_MAP_WIDTH, h = DEFAULT_MAP_HEIGHT) {
-    let grid = Array(h).fill().map(() => Array(w).fill(0));
+    let grid = Array(h).fill().map(() => Array(w).fill(1)); // Inicializa todo en Suelo (1)
     const cx = Math.floor(w / 2);
     const cy = Math.floor(h / 2);
 
     for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
-            // Bordes de mapa (Paredes / Agua)
+            // Bordes de mapa (Agua = 0 / Pared = 2)
             if (x === 0 || y === 0 || x === w - 1 || y === h - 1) {
-                grid[y][x] = 2; // Pared
+                grid[y][x] = 0; // Agua bordes exteriores
+                continue;
+            }
+            
+            if (x === 1 || y === 1 || x === w - 2 || y === h - 2) {
+                grid[y][x] = 2; // Muro perimetral
                 continue;
             }
 
-            // Distancia para forma de isla alargada
-            const dx = (x - cx) / (w / 2.2);
-            const dy = (y - cy) / (h / 2.2);
-            const dist = Math.sqrt(dx * dx + dy * dy);
-
-            if (dist < 0.85) {
-                grid[y][x] = 1; // Tierra / Pasto
-            }
-
-            // Río horizontal central
-            if (Math.abs(y - cy) <= 2 && dist < 0.8) {
-                grid[y][x] = 3; // Río de Queso / Zona Neón
+            // Muros y estructuras aleatorias
+            if (Math.random() < 0.06) {
+                grid[y][x] = 2; // Muro / Obstáculo
+            } 
+            // Cofres y loot
+            else if (Math.random() < 0.02) {
+                grid[y][x] = 3; // Cofre / Item Drop
             }
         }
     }
 
-    // Spawns en las esquinas
-    const marginX = 8;
-    const marginY = 8;
-    grid[marginY][marginX] = 4;
-    grid[h - marginY - 1][marginX] = 4;
-    grid[marginY][w - marginX - 1] = 4;
-    grid[h - marginY - 1][w - marginX - 1] = 4;
-
     return {
         map_name: "Isla Batalla Rat Wars (Offline)",
-        theme: "Cyberpunk Fortnite Queso",
+        theme: "Halloween Cyberpunk",
         width: w,
         height: h,
         tile_size: TILE_SIZE,
@@ -72,16 +64,15 @@ function generateFallbackIsland(w = DEFAULT_MAP_WIDTH, h = DEFAULT_MAP_HEIGHT) {
         ],
         special_objects: [
             { type: "chest", x: Math.floor(w * 0.3), y: Math.floor(h * 0.4), tag: "Cofre de Botín" },
-            { type: "chest", x: Math.floor(w * 0.7), y: Math.floor(h * 0.6), tag: "Cofre de Botín" },
-            { type: "supply_drop", x: cx, y: cy, tag: "Drop Neón" }
+            { type: "chest", x: Math.floor(w * 0.7), y: Math.floor(h * 0.6), tag: "Cofre de Botín" }
         ],
         grid
     };
 }
 
-// 1. Ruta raíz con dimensiones reales
+// 1. Ruta raíz
 app.get('/', (req, res) => {
-    res.status(200).send(`Rat Wars Render Server - Online (Medidas Reales: ${DEFAULT_MAP_WIDTH}x${DEFAULT_MAP_HEIGHT} casillas = ${DEFAULT_MAP_WIDTH * TILE_SIZE}x${DEFAULT_MAP_HEIGHT * TILE_SIZE} px)`);
+    res.status(200).send(`Rat Wars Render Server - Online (${DEFAULT_MAP_WIDTH}x${DEFAULT_MAP_HEIGHT} casillas = ${DEFAULT_MAP_WIDTH * TILE_SIZE}x${DEFAULT_MAP_HEIGHT * TILE_SIZE} px)`);
 });
 
 // 2. Endpoint de estado
@@ -98,7 +89,7 @@ app.get('/api/status', (req, res) => {
 
 // 3. Ruta principal de generación de mapa
 app.post('/api/render_map', async (req, res) => {
-    const userPrompt = req.body.prompt || "Isla de batalla estilo Fortnite con ríos de queso, edificios neón y cofres de botín";
+    const userPrompt = req.body.prompt || "Isla de batalla de Halloween con caminos, estructuras de muros y cofres de botín";
     const mapWidth = req.body.width || DEFAULT_MAP_WIDTH;
     const mapHeight = req.body.height || DEFAULT_MAP_HEIGHT;
 
@@ -113,10 +104,10 @@ app.post('/api/render_map', async (req, res) => {
     }
 
     try {
-        const systemPrompt = `Eres el diseñador principal de mapas procedurales para Rat Wars.
-Genera un mapa de matriz de ${mapWidth} columnas por ${mapHeight} filas (${mapWidth * TILE_SIZE}x${mapHeight * TILE_SIZE} px).
+        const systemPrompt = `Eres el diseñador de mapas procedurales para Rat Wars en GameMaker.
+Genera una matriz para un mapa de ${mapWidth} columnas por ${mapHeight} filas (${mapWidth * TILE_SIZE}x${mapHeight * TILE_SIZE} px).
 
-Responde ÚNICAMENTE en JSON válido sin comillas markdown.
+Debes responder ÚNICAMENTE con un JSON válido sin bloques markdown.
 
 Formato JSON de salida:
 {
@@ -133,21 +124,24 @@ Formato JSON de salida:
   "grid": [[0,0,1], [0,1,1]]
 }
 
-Valores de grid:
-0 = Agua/Vacío
-1 = Tierra/Pasto
-2 = Estructura/Muro
-3 = Río/Zona Neón
-4 = Punto de Spawn`;
+REGLA STRICTA DE LA MATRIZ (grid):
+Usa ÚNICAMENTE estos 4 valores numéricos en el arreglo 2D:
+0 = Agua / Zona hundida (Genera obj_water)
+1 = Suelo / Pasto basal (Genera obj_floor y opcionalmente obj_pasto)
+2 = Muros / Obstáculos (Genera obj_floor + obj_wall)
+3 = Loot / Cofres y armas (Genera obj_floor + obj_chest / obj_weapon_drop)
+
+NO utilices ningún otro número.`;
 
         const response = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
-                model: 'google/gemini-2.5-flash', // Corrección del modelo
+                model: 'google/gemini-1.5-flash',
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: `Indicación del mapa: "${userPrompt}"` }
                 ],
+                max_tokens: 6000,
                 response_format: { type: 'json_object' }
             },
             {
@@ -157,7 +151,7 @@ Valores de grid:
                     'HTTP-Referer': 'https://rat-wars.onrender.com',
                     'X-Title': 'Rat Wars Game'
                 },
-                timeout: 45000 // Aumentado a 45s por el volumen del JSON
+                timeout: 45000
             }
         );
 
@@ -172,7 +166,6 @@ Valores de grid:
         });
 
     } catch (error) {
-        // Muestra el motivo exacto en los Logs de Render
         const apiErrorDetails = error.response?.data || error.message;
         console.error("❌ Error de comunicación con OpenRouter:", JSON.stringify(apiErrorDetails, null, 2));
 
@@ -185,5 +178,5 @@ Valores de grid:
 });
 
 app.listen(PORT, () => {
-    console.log(`⚡ SERVIDOR DE RENDER ACTIVO EN PUERTO ${PORT} (Soporte Real: ${DEFAULT_MAP_WIDTH}x${DEFAULT_MAP_HEIGHT} casillas = ${DEFAULT_MAP_WIDTH * TILE_SIZE}x${DEFAULT_MAP_HEIGHT * TILE_SIZE} px)`);
+    console.log(`⚡ SERVIDOR DE RENDER ACTIVO EN PUERTO ${PORT} (${DEFAULT_MAP_WIDTH}x${DEFAULT_MAP_HEIGHT} casillas = ${DEFAULT_MAP_WIDTH * TILE_SIZE}x${DEFAULT_MAP_HEIGHT * TILE_SIZE} px)`);
 });

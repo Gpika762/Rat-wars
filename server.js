@@ -102,10 +102,9 @@ app.post('/api/render_map', async (req, res) => {
     const mapWidth = req.body.width || DEFAULT_MAP_WIDTH;
     const mapHeight = req.body.height || DEFAULT_MAP_HEIGHT;
 
-    console.log(`[Render Server] Procesando prompt: "${userPrompt}" (${mapWidth}x${mapHeight} casillas | ${mapWidth * TILE_SIZE}x${mapHeight * TILE_SIZE} px)`);
+    console.log(`[Render Server] Procesando prompt: "${userPrompt}" (${mapWidth}x${mapHeight})`);
 
     if (!openRouterApiKey) {
-        console.warn("⚠️ No se encontró OPENROUTER_API_KEY en variables de entorno. Usando mapa fallback.");
         return res.status(200).json({ 
             success: true, 
             map: generateFallbackIsland(mapWidth, mapHeight),
@@ -114,49 +113,37 @@ app.post('/api/render_map', async (req, res) => {
     }
 
     try {
-        const systemPrompt = `Eres el diseñador principal de mapas procedurales para Rat Wars, un juego de batalla campal estilo Fortnite.
-Genera un mapa de matriz de ${mapWidth} columnas por ${mapHeight} filas (correspondiente a una arena de ${mapWidth * TILE_SIZE}x${mapHeight * TILE_SIZE} píxeles con casillas de 32x32).
+        const systemPrompt = `Eres el diseñador principal de mapas procedurales para Rat Wars.
+Genera un mapa de matriz de ${mapWidth} columnas por ${mapHeight} filas (${mapWidth * TILE_SIZE}x${mapHeight * TILE_SIZE} px).
 
-El mapa se recorre desde un autobús de batalla/despliegue aéreo sobre la isla. Diseña puntos de interés (POIs), zonas de botín y objetos temáticos.
+Responde ÚNICAMENTE en JSON válido sin comillas markdown.
 
-Debes responder ÚNICAMENTE con un JSON válido, sin ningún texto alrededor ni marcas de Markdown.
-
-Formato estricto JSON de salida:
+Formato JSON de salida:
 {
-  "map_name": "Nombre creativo de la isla",
+  "map_name": "Nombre de la isla",
   "theme": "Estilo visual",
   "width": ${mapWidth},
   "height": ${mapHeight},
   "tile_size": 32,
   "real_width_px": ${mapWidth * TILE_SIZE},
   "real_height_px": ${mapHeight * TILE_SIZE},
-  "bus_route": {
-    "start": {"x": 10, "y": 0},
-    "end": {"x": 140, "y": 90}
-  },
-  "pois": [
-    {"name": "Poblado Quesero", "x": 30, "y": 25},
-    {"name": "Torres Neón", "x": 80, "y": 45}
-  ],
-  "special_objects": [
-    {"type": "chest", "x": 32, "y": 26, "tag": "Cofre de Botín"},
-    {"type": "supply_drop", "x": 75, "y": 50, "tag": "Suministro Aéreo"},
-    {"type": "building_tower", "x": 40, "y": 30, "tag": "Estructura Construida"}
-  ],
-  "grid": [[0,0,1,...], [0,1,1,...]]
+  "bus_route": { "start": {"x": 10, "y": 0}, "end": {"x": 140, "y": 90} },
+  "pois": [ {"name": "Poblado Quesero", "x": 30, "y": 25} ],
+  "special_objects": [ {"type": "chest", "x": 32, "y": 26, "tag": "Cofre"} ],
+  "grid": [[0,0,1], [0,1,1]]
 }
 
-Valores numéricos obligatorios de la matriz (grid):
-0 = Agua/Vacío (Límite exterior)
-1 = Tierra/Piso (Pasto, terreno transitable)
-2 = Estructura/Pared/Obstáculo (Muro infranqueable)
+Valores de grid:
+0 = Agua/Vacío
+1 = Tierra/Pasto
+2 = Estructura/Muro
 3 = Río/Zona Neón
-4 = Punto de Spawn / Caída recomendada`;
+4 = Punto de Spawn`;
 
         const response = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
-                model: 'google/gemini-2.5-flash-lite',
+                model: 'google/gemini-2.5-flash', // Corrección del modelo
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: `Indicación del mapa: "${userPrompt}"` }
@@ -170,13 +157,11 @@ Valores numéricos obligatorios de la matriz (grid):
                     'HTTP-Referer': 'https://rat-wars.onrender.com',
                     'X-Title': 'Rat Wars Game'
                 },
-                timeout: 30000
+                timeout: 45000 // Aumentado a 45s por el volumen del JSON
             }
         );
 
         let responseText = response.data.choices[0].message.content;
-
-        // Limpieza de Markdown (```json ... ```)
         responseText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
 
         const mapData = JSON.parse(responseText);
@@ -187,11 +172,14 @@ Valores numéricos obligatorios de la matriz (grid):
         });
 
     } catch (error) {
-        console.error("❌ Error en la llamada a OpenRouter API:", error.response?.data || error.message);
+        // Muestra el motivo exacto en los Logs de Render
+        const apiErrorDetails = error.response?.data || error.message;
+        console.error("❌ Error de comunicación con OpenRouter:", JSON.stringify(apiErrorDetails, null, 2));
+
         return res.status(200).json({ 
             success: true, 
             map: generateFallbackIsland(mapWidth, mapHeight),
-            error_info: "Fallback activado por error de API u OpenRouter"
+            error_info: "Fallback activado: " + (error.response?.data?.error?.message || error.message)
         });
     }
 });

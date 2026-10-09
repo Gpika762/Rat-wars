@@ -136,7 +136,7 @@ NO utilices ningún otro número.`;
         const response = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
-                model: 'google/gemini-1.5-flash',
+                model: 'google/gemini-2.5-flash-lite',
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: `Indicación del mapa: "${userPrompt}"` }
